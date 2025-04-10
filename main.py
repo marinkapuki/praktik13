@@ -1,39 +1,63 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from .database import engine, get_db, Base, TodoDB
-from .schemas import TodoCreate, TodoUpdate, TodoResponse
-from .crud import create_todo, get_todo, update_todo, delete_todo
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+# Создаем словарь для хранения Todo и переменную для генерации id
+fake_db = {}
+counter = 1  # Используем для генерации id
 
 app = FastAPI()
 
-@app.on_event("startup")
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# Модели для входных и выходных данных
+class TodoCreate(BaseModel):
+    title: str
+    description: str
 
-@app.post("/todos", response_model=TodoResponse, status_code=status.HTTP_201_CREATED)
-async def create_todo_endpoint(todo: TodoCreate, db: AsyncSession = Depends(get_db)):
-    return await create_todo(db, todo.dict())
+class TodoUpdate(BaseModel):
+    title: str
+    description: str
+    completed: bool
 
-@app.get("/todos/{todo_id}", response_model=TodoResponse)
-async def read_todo(todo_id: int, db: AsyncSession = Depends(get_db)):
-    todo = await get_todo(db, todo_id)
-    if not todo:
+class Todo(TodoCreate):
+    id: int
+    completed: bool
+
+    class Config:
+        orm_mode = True
+
+# Конечная точка для создания Todo
+@app.post("/todos/", response_model=Todo)
+def create_todo(todo: TodoCreate):
+    global counter  # Глобальная переменная для инкремента id
+    new_todo = Todo(id=counter, title=todo.title, description=todo.description, completed=False)
+    fake_db[counter] = new_todo
+    counter += 1  # Увеличиваем счетчик для следующего id
+    return new_todo
+
+# Конечная точка для получения Todo по ID
+@app.get("/todos/{todo_id}", response_model=Todo)
+def read_todo(todo_id: int):
+    if todo_id not in fake_db:
         raise HTTPException(status_code=404, detail="Todo not found")
-    return todo
+    return fake_db[todo_id]
 
-@app.put("/todos/{todo_id}", response_model=TodoResponse)
-async def update_todo_endpoint(
-    todo_id: int, 
-    update_data: TodoUpdate, 
-    db: AsyncSession = Depends(get_db)
-):
-    updated_todo = await update_todo(db, todo_id, update_data.dict(exclude_unset=True))
-    if not updated_todo:
+# Конечная точка для обновления Todo
+@app.put("/todos/{todo_id}", response_model=Todo)
+def update_todo(todo_id: int, todo: TodoUpdate):
+    if todo_id not in fake_db:
         raise HTTPException(status_code=404, detail="Todo not found")
-    return updated_todo
+    
+    existing_todo = fake_db[todo_id]
+    existing_todo.title = todo.title
+    existing_todo.description = todo.description
+    existing_todo.completed = todo.completed
+    fake_db[todo_id] = existing_todo
+    return existing_todo
 
-@app.delete("/todos/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_todo_endpoint(todo_id: int, db: AsyncSession = Depends(get_db)):
-    success = await delete_todo(db, todo_id)
-    if not success:
+# Конечная точка для удаления Todo
+@app.delete("/todos/{todo_id}")
+def delete_todo(todo_id: int):
+    if todo_id not in fake_db:
         raise HTTPException(status_code=404, detail="Todo not found")
+    
+    del fake_db[todo_id]
+    return {"message": "Todo successfully deleted"}
